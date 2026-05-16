@@ -1,0 +1,690 @@
+//@version=5
+indicator("SR Confluencia + SL/TP + Mapa Calor", "SR+C+HM", true, max_lines_count=500, max_labels_count=500, max_boxes_count=300)
+
+// ============================================================
+// INPUTS — GENERAL
+// ============================================================
+
+pivot_l   = input.int(10,    "Velas izquierda pivot",      minval=2,   maxval=50)
+pivot_r   = input.int(10,    "Velas derecha pivot",        minval=2,   maxval=50)
+touch_pct = input.float(0.3, "Zona toque pct",             minval=0.1, step=0.1)
+tl_min    = input.int(8,     "Velas minimas tendencia",    minval=3,   maxval=100)
+extend_tl = input.bool(false,"Extender tendencias")
+show_tbl  = input.bool(true, "Mostrar tabla")
+zona_pct  = input.float(0.4, "Ancho zona confluencia (%)", minval=0.1, step=0.1)
+rr_ratio  = input.float(2.0, "Ratio R:R para TP",         minval=0.5, step=0.5)
+sl_mult   = input.float(1.5, "Multiplicador zona SL",     minval=0.5, step=0.5)
+
+grp = "Colores"
+col_ss = input.color(color.new(#0D47A1, 0),  "Soporte fuerte",     group=grp)
+col_sm = input.color(color.new(#1976D2, 0),  "Soporte medio",      group=grp)
+col_sw = input.color(color.new(#90CAF9, 0),  "Soporte debil",      group=grp)
+col_rs = input.color(color.new(#B71C1C, 0),  "Resistencia fuerte", group=grp)
+col_rm = input.color(color.new(#E53935, 0),  "Resistencia media",  group=grp)
+col_rw = input.color(color.new(#EF9A9A, 0),  "Resistencia debil",  group=grp)
+col_up = input.color(color.new(#00C853, 0),  "Tendencia alcista",  group=grp)
+col_dn = input.color(color.new(#FF1744, 0),  "Tendencia bajista",  group=grp)
+col_sl = input.color(color.new(#FF6F00, 0),  "Stop Loss",          group=grp)
+col_tp = input.color(color.new(#00E676, 0),  "Take Profit",        group=grp)
+
+// ============================================================
+// INPUTS — MAPA DE CALOR
+// ============================================================
+
+grp_hm   = "Mapa de Calor"
+show_hm  = input.bool(true,  "Mostrar mapa de calor",       group=grp_hm)
+hm_bands = input.int(60,     "Resolución (nº bandas)",       group=grp_hm, minval=20, maxval=100)
+hm_range = input.float(4.0,  "Rango ± precio (%)",           group=grp_hm, minval=1.0, maxval=15.0, step=0.5)
+hm_width = input.int(22,     "Ancho columna (barras)",        group=grp_hm, minval=8,  maxval=60)
+hm_offset= input.int(35,     "Separación del gráfico (barras)", group=grp_hm, minval=5, maxval=80)
+
+// ============================================================
+// PIVOTES
+// ============================================================
+
+ph = ta.pivothigh(high, pivot_l, pivot_r)
+pl = ta.pivotlow(low,   pivot_l, pivot_r)
+
+ph_val = not na(ph) ? ph : na
+ph_bar = not na(ph) ? bar_index[pivot_r] : na
+pl_val = not na(pl) ? pl : na
+pl_bar = not na(pl) ? bar_index[pivot_r] : na
+
+tzone = close * touch_pct / 100
+
+// ============================================================
+// VARIABLES PERSISTENTES S/R
+// ============================================================
+
+var float r1 = na
+var int   r1t = 0
+var float r2 = na
+var int   r2t = 0
+var float r3 = na
+var int   r3t = 0
+var float r4 = na
+var int   r4t = 0
+var float r5 = na
+var int   r5t = 0
+
+var float s1 = na
+var int   s1t = 0
+var float s2 = na
+var int   s2t = 0
+var float s3 = na
+var int   s3t = 0
+var float s4 = na
+var int   s4t = 0
+var float s5 = na
+var int   s5t = 0
+
+var float tp_ph_prev  = na
+var int   tb_ph_prev  = na
+var float tp_ph_curr  = na
+var int   tb_ph_curr  = na
+var float tl_bear_slope = na
+
+var float tp_pl_prev  = na
+var int   tb_pl_prev  = na
+var float tp_pl_curr  = na
+var int   tb_pl_curr  = na
+var float tl_bull_slope = na
+
+var int bear_fz = 0
+var int bull_fz = 0
+
+// ============================================================
+// ROTAR S/R
+// ============================================================
+
+if not na(ph_val)
+    r5  := r4
+    r5t := r4t
+    r4  := r3
+    r4t := r3t
+    r3  := r2
+    r3t := r2t
+    r2  := r1
+    r2t := r1t
+    r1  := ph_val
+    r1t := 1
+
+if not na(pl_val)
+    s5  := s4
+    s5t := s4t
+    s4  := s3
+    s4t := s3t
+    s3  := s2
+    s3t := s2t
+    s2  := s1
+    s2t := s1t
+    s1  := pl_val
+    s1t := 1
+
+// ============================================================
+// CONTAR TOQUES
+// ============================================================
+
+if not na(r1) and math.abs(high - r1) <= tzone
+    r1t += 1
+if not na(r2) and math.abs(high - r2) <= tzone
+    r2t += 1
+if not na(r3) and math.abs(high - r3) <= tzone
+    r3t += 1
+if not na(r4) and math.abs(high - r4) <= tzone
+    r4t += 1
+if not na(r5) and math.abs(high - r5) <= tzone
+    r5t += 1
+if not na(s1) and math.abs(low - s1) <= tzone
+    s1t += 1
+if not na(s2) and math.abs(low - s2) <= tzone
+    s2t += 1
+if not na(s3) and math.abs(low - s3) <= tzone
+    s3t += 1
+if not na(s4) and math.abs(low - s4) <= tzone
+    s4t += 1
+if not na(s5) and math.abs(low - s5) <= tzone
+    s5t += 1
+
+// ============================================================
+// HELPERS
+// ============================================================
+
+fc(t, res) =>
+    strong = res ? col_rs : col_ss
+    mid    = res ? col_rm : col_sm
+    weak   = res ? col_rw : col_sw
+    t >= 4 ? strong : t >= 2 ? mid : weak
+
+fw(t) =>
+    t >= 4 ? 3 : t >= 2 ? 2 : 1
+
+fl(t) =>
+    t >= 4 ? "FUERTE" : t >= 2 ? "MEDIO" : "DEBIL"
+
+// ============================================================
+// LINEAS S/R
+// ============================================================
+
+if not na(ph_val)
+    c = fc(r1t, true)
+    line.new(ph_bar, ph_val, bar_index, ph_val,
+         color=c, width=fw(r1t), style=line.style_solid, extend=extend.none)
+
+if not na(pl_val)
+    c = fc(s1t, false)
+    line.new(pl_bar, pl_val, bar_index, pl_val,
+         color=c, width=fw(s1t), style=line.style_solid, extend=extend.none)
+
+// ============================================================
+// TENDENCIAS
+// ============================================================
+
+if not na(ph_val)
+    tp_ph_prev  := tp_ph_curr
+    tb_ph_prev  := tb_ph_curr
+    tp_ph_curr  := ph_val
+    tb_ph_curr  := ph_bar
+    if not na(tp_ph_prev) and not na(tp_ph_curr)
+        gap = tb_ph_curr - tb_ph_prev
+        if gap >= tl_min and tp_ph_curr < tp_ph_prev
+            sp  = (tp_ph_prev - tp_ph_curr) / tp_ph_prev * 100
+            fz  = sp > 1.5 or gap > 40 ? 3 : sp > 0.5 or gap > 20 ? 2 : 1
+            ext = extend_tl ? extend.right : extend.none
+            line.new(tb_ph_prev, tp_ph_prev, tb_ph_curr, tp_ph_curr,
+                 color=color.new(col_dn, 30), width=fz, extend=ext)
+            tl_bear_slope := (tp_ph_curr - tp_ph_prev) / gap
+            bear_fz := fz
+
+if not na(pl_val)
+    tp_pl_prev  := tp_pl_curr
+    tb_pl_prev  := tb_pl_curr
+    tp_pl_curr  := pl_val
+    tb_pl_curr  := pl_bar
+    if not na(tp_pl_prev) and not na(tp_pl_curr)
+        gap = tb_pl_curr - tb_pl_prev
+        if gap >= tl_min and tp_pl_curr > tp_pl_prev
+            sp  = (tp_pl_curr - tp_pl_prev) / tp_pl_prev * 100
+            fz  = sp > 1.5 or gap > 40 ? 3 : sp > 0.5 or gap > 20 ? 2 : 1
+            ext = extend_tl ? extend.right : extend.none
+            line.new(tb_pl_prev, tp_pl_prev, tb_pl_curr, tp_pl_curr,
+                 color=color.new(col_up, 30), width=fz, extend=ext)
+            tl_bull_slope := (tp_pl_curr - tp_pl_prev) / gap
+            bull_fz := fz
+
+// ============================================================
+// SCORE DE CONFLUENCIA
+// ============================================================
+
+bear_proj = not na(tp_ph_curr) and not na(tb_ph_curr) and not na(tl_bear_slope) ?
+     tp_ph_curr + tl_bear_slope * (bar_index - tb_ph_curr) : na
+
+bull_proj = not na(tp_pl_curr) and not na(tb_pl_curr) and not na(tl_bull_slope) ?
+     tp_pl_curr + tl_bull_slope * (bar_index - tb_pl_curr) : na
+
+zona_band = close * zona_pct / 100
+
+f_score(nivel, nivel_fuerza, is_res) =>
+    score = nivel_fuerza >= 4 ? 3 : nivel_fuerza >= 2 ? 2 : 1
+    if is_res and not na(bear_proj) and math.abs(nivel - bear_proj) <= zona_band
+        score := score + bear_fz
+    if not is_res and not na(bull_proj) and math.abs(nivel - bull_proj) <= zona_band
+        score := score + bull_fz
+    score
+
+score_r1 = not na(r1) ? f_score(r1, r1t, true)  : 0
+score_r2 = not na(r2) ? f_score(r2, r2t, true)  : 0
+score_r3 = not na(r3) ? f_score(r3, r3t, true)  : 0
+score_r4 = not na(r4) ? f_score(r4, r4t, true)  : 0
+score_r5 = not na(r5) ? f_score(r5, r5t, true)  : 0
+score_s1 = not na(s1) ? f_score(s1, s1t, false) : 0
+score_s2 = not na(s2) ? f_score(s2, s2t, false) : 0
+score_s3 = not na(s3) ? f_score(s3, s3t, false) : 0
+score_s4 = not na(s4) ? f_score(s4, s4t, false) : 0
+score_s5 = not na(s5) ? f_score(s5, s5t, false) : 0
+
+// ============================================================
+// ZONAS CONFLUENCIA + SL/TP
+// ============================================================
+
+f_zone_alpha(score) =>
+    score >= 5 ? 70 : score >= 4 ? 80 : 88
+
+f_stars(score) =>
+    score >= 5 ? "★★★" : score >= 4 ? "★★☆" : score >= 3 ? "★☆☆" : "---"
+
+f_sl_sup(nivel) =>
+    nivel - zona_band * sl_mult
+
+f_tp_sup(nivel) =>
+    sl_dist = zona_band * sl_mult
+    nivel + sl_dist * rr_ratio
+
+f_sl_res(nivel) =>
+    nivel + zona_band * sl_mult
+
+f_tp_res(nivel) =>
+    sl_dist = zona_band * sl_mult
+    nivel - sl_dist * rr_ratio
+
+zone_w = 12
+
+if barstate.islast
+    half = zona_band * 0.8
+
+    // ── RESISTENCIAS ──
+    if not na(r1) and score_r1 >= 3
+        box.new(bar_index + 1, r1 + half, bar_index + zone_w, r1 - half,
+             bgcolor=color.new(col_rs, f_zone_alpha(score_r1)),
+             border_color=color.new(col_rs, 30), border_width=1, extend=extend.none)
+        label.new(bar_index + zone_w + 1, r1,
+             f_stars(score_r1) + " R " + str.tostring(math.round(r1, 2)) + "  SL " + str.tostring(math.round(f_sl_res(r1), 2)) + "  TP " + str.tostring(math.round(f_tp_res(r1), 2)),
+             color=color.new(col_rs, 70), textcolor=col_rs,
+             style=label.style_label_left, size=size.small)
+        line.new(bar_index + 1, f_sl_res(r1), bar_index + zone_w + 15, f_sl_res(r1),
+             color=color.new(col_sl, 40), width=1, style=line.style_dashed)
+        line.new(bar_index + 1, f_tp_res(r1), bar_index + zone_w + 15, f_tp_res(r1),
+             color=color.new(col_tp, 40), width=1, style=line.style_dashed)
+        label.new(bar_index + zone_w + 16, f_sl_res(r1), "SL",
+             color=color.new(col_sl, 70), textcolor=col_sl, style=label.style_label_left, size=size.tiny)
+        label.new(bar_index + zone_w + 16, f_tp_res(r1), "TP",
+             color=color.new(col_tp, 70), textcolor=col_tp, style=label.style_label_left, size=size.tiny)
+
+    if not na(r2) and score_r2 >= 3
+        box.new(bar_index + 1, r2 + half, bar_index + zone_w, r2 - half,
+             bgcolor=color.new(col_rs, f_zone_alpha(score_r2)),
+             border_color=color.new(col_rs, 30), border_width=1, extend=extend.none)
+        label.new(bar_index + zone_w + 1, r2,
+             f_stars(score_r2) + " R " + str.tostring(math.round(r2, 2)) + "  SL " + str.tostring(math.round(f_sl_res(r2), 2)) + "  TP " + str.tostring(math.round(f_tp_res(r2), 2)),
+             color=color.new(col_rs, 70), textcolor=col_rs,
+             style=label.style_label_left, size=size.small)
+        line.new(bar_index + 1, f_sl_res(r2), bar_index + zone_w + 15, f_sl_res(r2),
+             color=color.new(col_sl, 40), width=1, style=line.style_dashed)
+        line.new(bar_index + 1, f_tp_res(r2), bar_index + zone_w + 15, f_tp_res(r2),
+             color=color.new(col_tp, 40), width=1, style=line.style_dashed)
+        label.new(bar_index + zone_w + 16, f_sl_res(r2), "SL",
+             color=color.new(col_sl, 70), textcolor=col_sl, style=label.style_label_left, size=size.tiny)
+        label.new(bar_index + zone_w + 16, f_tp_res(r2), "TP",
+             color=color.new(col_tp, 70), textcolor=col_tp, style=label.style_label_left, size=size.tiny)
+
+    if not na(r3) and score_r3 >= 3
+        box.new(bar_index + 1, r3 + half, bar_index + zone_w, r3 - half,
+             bgcolor=color.new(col_rs, f_zone_alpha(score_r3)),
+             border_color=color.new(col_rs, 30), border_width=1, extend=extend.none)
+        label.new(bar_index + zone_w + 1, r3,
+             f_stars(score_r3) + " R " + str.tostring(math.round(r3, 2)) + "  SL " + str.tostring(math.round(f_sl_res(r3), 2)) + "  TP " + str.tostring(math.round(f_tp_res(r3), 2)),
+             color=color.new(col_rs, 70), textcolor=col_rs,
+             style=label.style_label_left, size=size.small)
+        line.new(bar_index + 1, f_sl_res(r3), bar_index + zone_w + 15, f_sl_res(r3),
+             color=color.new(col_sl, 40), width=1, style=line.style_dashed)
+        line.new(bar_index + 1, f_tp_res(r3), bar_index + zone_w + 15, f_tp_res(r3),
+             color=color.new(col_tp, 40), width=1, style=line.style_dashed)
+        label.new(bar_index + zone_w + 16, f_sl_res(r3), "SL",
+             color=color.new(col_sl, 70), textcolor=col_sl, style=label.style_label_left, size=size.tiny)
+        label.new(bar_index + zone_w + 16, f_tp_res(r3), "TP",
+             color=color.new(col_tp, 70), textcolor=col_tp, style=label.style_label_left, size=size.tiny)
+
+    if not na(r4) and score_r4 >= 3
+        box.new(bar_index + 1, r4 + half, bar_index + zone_w, r4 - half,
+             bgcolor=color.new(col_rs, f_zone_alpha(score_r4)),
+             border_color=color.new(col_rs, 30), border_width=1, extend=extend.none)
+        label.new(bar_index + zone_w + 1, r4,
+             f_stars(score_r4) + " R " + str.tostring(math.round(r4, 2)) + "  SL " + str.tostring(math.round(f_sl_res(r4), 2)) + "  TP " + str.tostring(math.round(f_tp_res(r4), 2)),
+             color=color.new(col_rs, 70), textcolor=col_rs,
+             style=label.style_label_left, size=size.small)
+        line.new(bar_index + 1, f_sl_res(r4), bar_index + zone_w + 15, f_sl_res(r4),
+             color=color.new(col_sl, 40), width=1, style=line.style_dashed)
+        line.new(bar_index + 1, f_tp_res(r4), bar_index + zone_w + 15, f_tp_res(r4),
+             color=color.new(col_tp, 40), width=1, style=line.style_dashed)
+        label.new(bar_index + zone_w + 16, f_sl_res(r4), "SL",
+             color=color.new(col_sl, 70), textcolor=col_sl, style=label.style_label_left, size=size.tiny)
+        label.new(bar_index + zone_w + 16, f_tp_res(r4), "TP",
+             color=color.new(col_tp, 70), textcolor=col_tp, style=label.style_label_left, size=size.tiny)
+
+    if not na(r5) and score_r5 >= 3
+        box.new(bar_index + 1, r5 + half, bar_index + zone_w, r5 - half,
+             bgcolor=color.new(col_rs, f_zone_alpha(score_r5)),
+             border_color=color.new(col_rs, 30), border_width=1, extend=extend.none)
+        label.new(bar_index + zone_w + 1, r5,
+             f_stars(score_r5) + " R " + str.tostring(math.round(r5, 2)) + "  SL " + str.tostring(math.round(f_sl_res(r5), 2)) + "  TP " + str.tostring(math.round(f_tp_res(r5), 2)),
+             color=color.new(col_rs, 70), textcolor=col_rs,
+             style=label.style_label_left, size=size.small)
+        line.new(bar_index + 1, f_sl_res(r5), bar_index + zone_w + 15, f_sl_res(r5),
+             color=color.new(col_sl, 40), width=1, style=line.style_dashed)
+        line.new(bar_index + 1, f_tp_res(r5), bar_index + zone_w + 15, f_tp_res(r5),
+             color=color.new(col_tp, 40), width=1, style=line.style_dashed)
+        label.new(bar_index + zone_w + 16, f_sl_res(r5), "SL",
+             color=color.new(col_sl, 70), textcolor=col_sl, style=label.style_label_left, size=size.tiny)
+        label.new(bar_index + zone_w + 16, f_tp_res(r5), "TP",
+             color=color.new(col_tp, 70), textcolor=col_tp, style=label.style_label_left, size=size.tiny)
+
+    // ── SOPORTES ──
+    if not na(s1) and score_s1 >= 3
+        box.new(bar_index + 1, s1 + half, bar_index + zone_w, s1 - half,
+             bgcolor=color.new(col_ss, f_zone_alpha(score_s1)),
+             border_color=color.new(col_ss, 30), border_width=1, extend=extend.none)
+        label.new(bar_index + zone_w + 1, s1,
+             f_stars(score_s1) + " S " + str.tostring(math.round(s1, 2)) + "  SL " + str.tostring(math.round(f_sl_sup(s1), 2)) + "  TP " + str.tostring(math.round(f_tp_sup(s1), 2)),
+             color=color.new(col_ss, 70), textcolor=col_ss,
+             style=label.style_label_left, size=size.small)
+        line.new(bar_index + 1, f_sl_sup(s1), bar_index + zone_w + 15, f_sl_sup(s1),
+             color=color.new(col_sl, 40), width=1, style=line.style_dashed)
+        line.new(bar_index + 1, f_tp_sup(s1), bar_index + zone_w + 15, f_tp_sup(s1),
+             color=color.new(col_tp, 40), width=1, style=line.style_dashed)
+        label.new(bar_index + zone_w + 16, f_sl_sup(s1), "SL",
+             color=color.new(col_sl, 70), textcolor=col_sl, style=label.style_label_left, size=size.tiny)
+        label.new(bar_index + zone_w + 16, f_tp_sup(s1), "TP",
+             color=color.new(col_tp, 70), textcolor=col_tp, style=label.style_label_left, size=size.tiny)
+
+    if not na(s2) and score_s2 >= 3
+        box.new(bar_index + 1, s2 + half, bar_index + zone_w, s2 - half,
+             bgcolor=color.new(col_ss, f_zone_alpha(score_s2)),
+             border_color=color.new(col_ss, 30), border_width=1, extend=extend.none)
+        label.new(bar_index + zone_w + 1, s2,
+             f_stars(score_s2) + " S " + str.tostring(math.round(s2, 2)) + "  SL " + str.tostring(math.round(f_sl_sup(s2), 2)) + "  TP " + str.tostring(math.round(f_tp_sup(s2), 2)),
+             color=color.new(col_ss, 70), textcolor=col_ss,
+             style=label.style_label_left, size=size.small)
+        line.new(bar_index + 1, f_sl_sup(s2), bar_index + zone_w + 15, f_sl_sup(s2),
+             color=color.new(col_sl, 40), width=1, style=line.style_dashed)
+        line.new(bar_index + 1, f_tp_sup(s2), bar_index + zone_w + 15, f_tp_sup(s2),
+             color=color.new(col_tp, 40), width=1, style=line.style_dashed)
+        label.new(bar_index + zone_w + 16, f_sl_sup(s2), "SL",
+             color=color.new(col_sl, 70), textcolor=col_sl, style=label.style_label_left, size=size.tiny)
+        label.new(bar_index + zone_w + 16, f_tp_sup(s2), "TP",
+             color=color.new(col_tp, 70), textcolor=col_tp, style=label.style_label_left, size=size.tiny)
+
+    if not na(s3) and score_s3 >= 3
+        box.new(bar_index + 1, s3 + half, bar_index + zone_w, s3 - half,
+             bgcolor=color.new(col_ss, f_zone_alpha(score_s3)),
+             border_color=color.new(col_ss, 30), border_width=1, extend=extend.none)
+        label.new(bar_index + zone_w + 1, s3,
+             f_stars(score_s3) + " S " + str.tostring(math.round(s3, 2)) + "  SL " + str.tostring(math.round(f_sl_sup(s3), 2)) + "  TP " + str.tostring(math.round(f_tp_sup(s3), 2)),
+             color=color.new(col_ss, 70), textcolor=col_ss,
+             style=label.style_label_left, size=size.small)
+        line.new(bar_index + 1, f_sl_sup(s3), bar_index + zone_w + 15, f_sl_sup(s3),
+             color=color.new(col_sl, 40), width=1, style=line.style_dashed)
+        line.new(bar_index + 1, f_tp_sup(s3), bar_index + zone_w + 15, f_tp_sup(s3),
+             color=color.new(col_tp, 40), width=1, style=line.style_dashed)
+        label.new(bar_index + zone_w + 16, f_sl_sup(s3), "SL",
+             color=color.new(col_sl, 70), textcolor=col_sl, style=label.style_label_left, size=size.tiny)
+        label.new(bar_index + zone_w + 16, f_tp_sup(s3), "TP",
+             color=color.new(col_tp, 70), textcolor=col_tp, style=label.style_label_left, size=size.tiny)
+
+    if not na(s4) and score_s4 >= 3
+        box.new(bar_index + 1, s4 + half, bar_index + zone_w, s4 - half,
+             bgcolor=color.new(col_ss, f_zone_alpha(score_s4)),
+             border_color=color.new(col_ss, 30), border_width=1, extend=extend.none)
+        label.new(bar_index + zone_w + 1, s4,
+             f_stars(score_s4) + " S " + str.tostring(math.round(s4, 2)) + "  SL " + str.tostring(math.round(f_sl_sup(s4), 2)) + "  TP " + str.tostring(math.round(f_tp_sup(s4), 2)),
+             color=color.new(col_ss, 70), textcolor=col_ss,
+             style=label.style_label_left, size=size.small)
+        line.new(bar_index + 1, f_sl_sup(s4), bar_index + zone_w + 15, f_sl_sup(s4),
+             color=color.new(col_sl, 40), width=1, style=line.style_dashed)
+        line.new(bar_index + 1, f_tp_sup(s4), bar_index + zone_w + 15, f_tp_sup(s4),
+             color=color.new(col_tp, 40), width=1, style=line.style_dashed)
+        label.new(bar_index + zone_w + 16, f_sl_sup(s4), "SL",
+             color=color.new(col_sl, 70), textcolor=col_sl, style=label.style_label_left, size=size.tiny)
+        label.new(bar_index + zone_w + 16, f_tp_sup(s4), "TP",
+             color=color.new(col_tp, 70), textcolor=col_tp, style=label.style_label_left, size=size.tiny)
+
+    if not na(s5) and score_s5 >= 3
+        box.new(bar_index + 1, s5 + half, bar_index + zone_w, s5 - half,
+             bgcolor=color.new(col_ss, f_zone_alpha(score_s5)),
+             border_color=color.new(col_ss, 30), border_width=1, extend=extend.none)
+        label.new(bar_index + zone_w + 1, s5,
+             f_stars(score_s5) + " S " + str.tostring(math.round(s5, 2)) + "  SL " + str.tostring(math.round(f_sl_sup(s5), 2)) + "  TP " + str.tostring(math.round(f_tp_sup(s5), 2)),
+             color=color.new(col_ss, 70), textcolor=col_ss,
+             style=label.style_label_left, size=size.small)
+        line.new(bar_index + 1, f_sl_sup(s5), bar_index + zone_w + 15, f_sl_sup(s5),
+             color=color.new(col_sl, 40), width=1, style=line.style_dashed)
+        line.new(bar_index + 1, f_tp_sup(s5), bar_index + zone_w + 15, f_tp_sup(s5),
+             color=color.new(col_tp, 40), width=1, style=line.style_dashed)
+        label.new(bar_index + zone_w + 16, f_sl_sup(s5), "SL",
+             color=color.new(col_sl, 70), textcolor=col_sl, style=label.style_label_left, size=size.tiny)
+        label.new(bar_index + zone_w + 16, f_tp_sup(s5), "TP",
+             color=color.new(col_tp, 70), textcolor=col_tp, style=label.style_label_left, size=size.tiny)
+
+// ============================================================
+// TABLA
+// ============================================================
+
+var table tbl = table.new(position.top_right, 4, 14,
+     bgcolor=color.new(#0D1117, 70),
+     border_width=1, border_color=color.new(color.gray, 65),
+     frame_width=1, frame_color=color.new(color.gray, 60))
+
+if show_tbl and barstate.islast
+    hbg = color.new(#161B22, 45)
+    rbg = color.new(#0D1117, 55)
+    htx = color.white
+    dtx = color.new(color.gray, 20)
+
+    table.cell(tbl, 0, 0, "NIVEL",  text_color=htx, bgcolor=hbg, text_size=size.small)
+    table.cell(tbl, 1, 0, "FUERZA", text_color=htx, bgcolor=hbg, text_size=size.small)
+    table.cell(tbl, 2, 0, "SL",     text_color=col_sl, bgcolor=hbg, text_size=size.small)
+    table.cell(tbl, 3, 0, "TP",     text_color=col_tp, bgcolor=hbg, text_size=size.small)
+
+    table.cell(tbl, 0, 1, "── RESISTENCIAS ──", text_color=htx, bgcolor=color.new(#7F0000, 75), text_size=size.tiny)
+    table.cell(tbl, 1, 1, "",                   text_color=htx, bgcolor=color.new(#7F0000, 75), text_size=size.tiny)
+    table.cell(tbl, 2, 1, "",                   text_color=htx, bgcolor=color.new(#7F0000, 75), text_size=size.tiny)
+    table.cell(tbl, 3, 1, "",                   text_color=htx, bgcolor=color.new(#7F0000, 75), text_size=size.tiny)
+
+    c1 = not na(r1) ? fc(r1t, true) : dtx
+    table.cell(tbl, 0, 2, not na(r1) ? f_stars(score_r1) + " R1 " + str.tostring(math.round(r1, 2)) : "R1 ---", text_color=c1, bgcolor=rbg, text_size=size.small)
+    table.cell(tbl, 1, 2, not na(r1) ? fl(r1t) : "---",                                                          text_color=c1, bgcolor=rbg, text_size=size.small)
+    table.cell(tbl, 2, 2, not na(r1) ? str.tostring(math.round(f_sl_res(r1), 2)) : "---",                        text_color=col_sl, bgcolor=rbg, text_size=size.small)
+    table.cell(tbl, 3, 2, not na(r1) ? str.tostring(math.round(f_tp_res(r1), 2)) : "---",                        text_color=col_tp, bgcolor=rbg, text_size=size.small)
+
+    c2 = not na(r2) ? fc(r2t, true) : dtx
+    table.cell(tbl, 0, 3, not na(r2) ? f_stars(score_r2) + " R2 " + str.tostring(math.round(r2, 2)) : "R2 ---", text_color=c2, bgcolor=rbg, text_size=size.small)
+    table.cell(tbl, 1, 3, not na(r2) ? fl(r2t) : "---",                                                          text_color=c2, bgcolor=rbg, text_size=size.small)
+    table.cell(tbl, 2, 3, not na(r2) ? str.tostring(math.round(f_sl_res(r2), 2)) : "---",                        text_color=col_sl, bgcolor=rbg, text_size=size.small)
+    table.cell(tbl, 3, 3, not na(r2) ? str.tostring(math.round(f_tp_res(r2), 2)) : "---",                        text_color=col_tp, bgcolor=rbg, text_size=size.small)
+
+    c3 = not na(r3) ? fc(r3t, true) : dtx
+    table.cell(tbl, 0, 4, not na(r3) ? f_stars(score_r3) + " R3 " + str.tostring(math.round(r3, 2)) : "R3 ---", text_color=c3, bgcolor=rbg, text_size=size.small)
+    table.cell(tbl, 1, 4, not na(r3) ? fl(r3t) : "---",                                                          text_color=c3, bgcolor=rbg, text_size=size.small)
+    table.cell(tbl, 2, 4, not na(r3) ? str.tostring(math.round(f_sl_res(r3), 2)) : "---",                        text_color=col_sl, bgcolor=rbg, text_size=size.small)
+    table.cell(tbl, 3, 4, not na(r3) ? str.tostring(math.round(f_tp_res(r3), 2)) : "---",                        text_color=col_tp, bgcolor=rbg, text_size=size.small)
+
+    c4 = not na(r4) ? fc(r4t, true) : dtx
+    table.cell(tbl, 0, 5, not na(r4) ? f_stars(score_r4) + " R4 " + str.tostring(math.round(r4, 2)) : "R4 ---", text_color=c4, bgcolor=rbg, text_size=size.small)
+    table.cell(tbl, 1, 5, not na(r4) ? fl(r4t) : "---",                                                          text_color=c4, bgcolor=rbg, text_size=size.small)
+    table.cell(tbl, 2, 5, not na(r4) ? str.tostring(math.round(f_sl_res(r4), 2)) : "---",                        text_color=col_sl, bgcolor=rbg, text_size=size.small)
+    table.cell(tbl, 3, 5, not na(r4) ? str.tostring(math.round(f_tp_res(r4), 2)) : "---",                        text_color=col_tp, bgcolor=rbg, text_size=size.small)
+
+    c5 = not na(r5) ? fc(r5t, true) : dtx
+    table.cell(tbl, 0, 6, not na(r5) ? f_stars(score_r5) + " R5 " + str.tostring(math.round(r5, 2)) : "R5 ---", text_color=c5, bgcolor=rbg, text_size=size.small)
+    table.cell(tbl, 1, 6, not na(r5) ? fl(r5t) : "---",                                                          text_color=c5, bgcolor=rbg, text_size=size.small)
+    table.cell(tbl, 2, 6, not na(r5) ? str.tostring(math.round(f_sl_res(r5), 2)) : "---",                        text_color=col_sl, bgcolor=rbg, text_size=size.small)
+    table.cell(tbl, 3, 6, not na(r5) ? str.tostring(math.round(f_tp_res(r5), 2)) : "---",                        text_color=col_tp, bgcolor=rbg, text_size=size.small)
+
+    table.cell(tbl, 0, 7, "── SOPORTES ──", text_color=htx, bgcolor=color.new(#0D47A1, 75), text_size=size.tiny)
+    table.cell(tbl, 1, 7, "",               text_color=htx, bgcolor=color.new(#0D47A1, 75), text_size=size.tiny)
+    table.cell(tbl, 2, 7, "",               text_color=htx, bgcolor=color.new(#0D47A1, 75), text_size=size.tiny)
+    table.cell(tbl, 3, 7, "",               text_color=htx, bgcolor=color.new(#0D47A1, 75), text_size=size.tiny)
+
+    d1 = not na(s1) ? fc(s1t, false) : dtx
+    table.cell(tbl, 0, 8,  not na(s1) ? f_stars(score_s1) + " S1 " + str.tostring(math.round(s1, 2)) : "S1 ---", text_color=d1, bgcolor=rbg, text_size=size.small)
+    table.cell(tbl, 1, 8,  not na(s1) ? fl(s1t) : "---",                                                           text_color=d1, bgcolor=rbg, text_size=size.small)
+    table.cell(tbl, 2, 8,  not na(s1) ? str.tostring(math.round(f_sl_sup(s1), 2)) : "---",                         text_color=col_sl, bgcolor=rbg, text_size=size.small)
+    table.cell(tbl, 3, 8,  not na(s1) ? str.tostring(math.round(f_tp_sup(s1), 2)) : "---",                         text_color=col_tp, bgcolor=rbg, text_size=size.small)
+
+    d2 = not na(s2) ? fc(s2t, false) : dtx
+    table.cell(tbl, 0, 9,  not na(s2) ? f_stars(score_s2) + " S2 " + str.tostring(math.round(s2, 2)) : "S2 ---", text_color=d2, bgcolor=rbg, text_size=size.small)
+    table.cell(tbl, 1, 9,  not na(s2) ? fl(s2t) : "---",                                                           text_color=d2, bgcolor=rbg, text_size=size.small)
+    table.cell(tbl, 2, 9,  not na(s2) ? str.tostring(math.round(f_sl_sup(s2), 2)) : "---",                         text_color=col_sl, bgcolor=rbg, text_size=size.small)
+    table.cell(tbl, 3, 9,  not na(s2) ? str.tostring(math.round(f_tp_sup(s2), 2)) : "---",                         text_color=col_tp, bgcolor=rbg, text_size=size.small)
+
+    d3 = not na(s3) ? fc(s3t, false) : dtx
+    table.cell(tbl, 0, 10, not na(s3) ? f_stars(score_s3) + " S3 " + str.tostring(math.round(s3, 2)) : "S3 ---", text_color=d3, bgcolor=rbg, text_size=size.small)
+    table.cell(tbl, 1, 10, not na(s3) ? fl(s3t) : "---",                                                           text_color=d3, bgcolor=rbg, text_size=size.small)
+    table.cell(tbl, 2, 10, not na(s3) ? str.tostring(math.round(f_sl_sup(s3), 2)) : "---",                         text_color=col_sl, bgcolor=rbg, text_size=size.small)
+    table.cell(tbl, 3, 10, not na(s3) ? str.tostring(math.round(f_tp_sup(s3), 2)) : "---",                         text_color=col_tp, bgcolor=rbg, text_size=size.small)
+
+    d4 = not na(s4) ? fc(s4t, false) : dtx
+    table.cell(tbl, 0, 11, not na(s4) ? f_stars(score_s4) + " S4 " + str.tostring(math.round(s4, 2)) : "S4 ---", text_color=d4, bgcolor=rbg, text_size=size.small)
+    table.cell(tbl, 1, 11, not na(s4) ? fl(s4t) : "---",                                                           text_color=d4, bgcolor=rbg, text_size=size.small)
+    table.cell(tbl, 2, 11, not na(s4) ? str.tostring(math.round(f_sl_sup(s4), 2)) : "---",                         text_color=col_sl, bgcolor=rbg, text_size=size.small)
+    table.cell(tbl, 3, 11, not na(s4) ? str.tostring(math.round(f_tp_sup(s4), 2)) : "---",                         text_color=col_tp, bgcolor=rbg, text_size=size.small)
+
+    d5 = not na(s5) ? fc(s5t, false) : dtx
+    table.cell(tbl, 0, 12, not na(s5) ? f_stars(score_s5) + " S5 " + str.tostring(math.round(s5, 2)) : "S5 ---", text_color=d5, bgcolor=rbg, text_size=size.small)
+    table.cell(tbl, 1, 12, not na(s5) ? fl(s5t) : "---",                                                           text_color=d5, bgcolor=rbg, text_size=size.small)
+    table.cell(tbl, 2, 12, not na(s5) ? str.tostring(math.round(f_sl_sup(s5), 2)) : "---",                         text_color=col_sl, bgcolor=rbg, text_size=size.small)
+    table.cell(tbl, 3, 12, not na(s5) ? str.tostring(math.round(f_tp_sup(s5), 2)) : "---",                         text_color=col_tp, bgcolor=rbg, text_size=size.small)
+
+    tdir = not na(tp_pl_curr) and not na(tp_pl_prev) and tp_pl_curr > tp_pl_prev ? "ALCISTA" :
+         not na(tp_ph_curr) and not na(tp_ph_prev) and tp_ph_curr < tp_ph_prev ? "BAJISTA" : "LATERAL"
+    tcol = tdir == "ALCISTA" ? col_up : tdir == "BAJISTA" ? col_dn : color.gray
+    table.cell(tbl, 0, 13, "Tendencia", text_color=htx,  bgcolor=hbg, text_size=size.small)
+    table.cell(tbl, 1, 13, tdir,        text_color=tcol, bgcolor=hbg, text_size=size.small)
+    table.cell(tbl, 2, 13, "SL=naranja",text_color=col_sl, bgcolor=hbg, text_size=size.tiny)
+    table.cell(tbl, 3, 13, "TP=verde",  text_color=col_tp, bgcolor=hbg, text_size=size.tiny)
+
+// ============================================================
+// MAPA DE CALOR — columna vertical a la derecha
+// Muestra dónde se concentra la "atracción" del precio según
+// la suma ponderada de todos los niveles S/R activos.
+// Color: ROJO = zona de resistencia/presión vendedora
+//        VERDE = zona de soporte/presión compradora
+// Intensidad: más opaco = mayor confluencia = más probable reacción
+// ============================================================
+
+if show_hm and barstate.islast
+
+    // Rango de precios que cubre el mapa
+    p_high     = close * (1.0 + hm_range / 100.0)
+    p_low      = close * (1.0 - hm_range / 100.0)
+    price_span = p_high - p_low
+    band_h     = price_span / hm_bands
+
+    // Posición horizontal del mapa (a la derecha de los labels SL/TP)
+    hm_x1 = bar_index + hm_offset
+    hm_x2 = hm_x1 + hm_width
+
+    // ── 1. Calcular calor por banda ──
+    // Para cada banda sumamos: score_nivel / distancia_en_bandas
+    // Un nivel justo en el centro de una banda aporta más calor
+    // que uno lejano. min_dist evita división por cero.
+
+    float[] heats = array.new_float(hm_bands, 0.0)
+
+    for i = 0 to hm_bands - 1
+        band_mid = p_low + (i + 0.5) * band_h
+        h = 0.0
+
+        // Resistencias
+        if not na(r1) and score_r1 > 0
+            d = math.max(math.abs(band_mid - r1) / band_h, 0.3)
+            h += float(score_r1) / d
+        if not na(r2) and score_r2 > 0
+            d = math.max(math.abs(band_mid - r2) / band_h, 0.3)
+            h += float(score_r2) / d
+        if not na(r3) and score_r3 > 0
+            d = math.max(math.abs(band_mid - r3) / band_h, 0.3)
+            h += float(score_r3) / d
+        if not na(r4) and score_r4 > 0
+            d = math.max(math.abs(band_mid - r4) / band_h, 0.3)
+            h += float(score_r4) / d
+        if not na(r5) and score_r5 > 0
+            d = math.max(math.abs(band_mid - r5) / band_h, 0.3)
+            h += float(score_r5) / d
+
+        // Soportes
+        if not na(s1) and score_s1 > 0
+            d = math.max(math.abs(band_mid - s1) / band_h, 0.3)
+            h += float(score_s1) / d
+        if not na(s2) and score_s2 > 0
+            d = math.max(math.abs(band_mid - s2) / band_h, 0.3)
+            h += float(score_s2) / d
+        if not na(s3) and score_s3 > 0
+            d = math.max(math.abs(band_mid - s3) / band_h, 0.3)
+            h += float(score_s3) / d
+        if not na(s4) and score_s4 > 0
+            d = math.max(math.abs(band_mid - s4) / band_h, 0.3)
+            h += float(score_s4) / d
+        if not na(s5) and score_s5 > 0
+            d = math.max(math.abs(band_mid - s5) / band_h, 0.3)
+            h += float(score_s5) / d
+
+        array.set(heats, i, h)
+
+    // ── 2. Normalizar ──
+    max_h = array.max(heats)
+
+    // ── 3. Dibujar fondo oscuro de la columna ──
+    box.new(hm_x1 - 1, p_high + band_h, hm_x2 + 1, p_low - band_h,
+         bgcolor=color.new(#0D1117, 55),
+         border_color=color.new(color.gray, 80), border_width=1)
+
+    // ── 4. Dibujar cada banda con color proporcional al calor ──
+    for i = 0 to hm_bands - 1
+        band_btm = p_low  + i * band_h
+        band_top = band_btm + band_h
+        band_mid = (band_btm + band_top) / 2.0
+        heat     = array.get(heats, i)
+        norm     = max_h > 0.0 ? heat / max_h : 0.0
+
+        if norm > 0.08  // umbral mínimo para no dibujar ruido
+            // alpha: 92 (casi invisible) → 10 (muy opaco)
+            alpha = int(math.round(92.0 - norm * 82.0))
+            alpha := math.max(alpha, 10)
+            alpha := math.min(alpha, 92)
+
+            if band_mid >= close
+                // Zona de resistencia — degradado rojo
+                // Más calor = rojo más oscuro e intenso
+                bg = norm > 0.75 ? color.new(#FF1744, alpha) :
+                     norm > 0.45 ? color.new(#FF5252, alpha) :
+                                   color.new(#FF8A80, alpha)
+                box.new(hm_x1, band_top, hm_x2, band_btm,
+                     bgcolor=bg, border_color=color.new(color.black, 99), border_width=0)
+            else
+                // Zona de soporte — degradado verde/azul
+                bg = norm > 0.75 ? color.new(#00C853, alpha) :
+                     norm > 0.45 ? color.new(#00E676, alpha) :
+                                   color.new(#69F0AE, alpha)
+                box.new(hm_x1, band_top, hm_x2, band_btm,
+                     bgcolor=bg, border_color=color.new(color.black, 99), border_width=0)
+
+    // ── 5. Línea del precio actual ──
+    line.new(hm_x1 - 1, close, hm_x2 + 1, close,
+         color=color.white, width=2, style=line.style_solid)
+
+    // ── 6. Etiquetas de referencia ──
+    label.new(hm_x1 + int(hm_width / 2), p_high + band_h * 0.6,
+         "🌡 CALOR",
+         color=color.new(#161B22, 40), textcolor=color.new(color.white, 15),
+         style=label.style_label_down, size=size.tiny)
+
+    label.new(hm_x2 + 1, p_high,
+         str.tostring(math.round(p_high, 2)),
+         color=color.new(color.black, 100), textcolor=color.new(color.gray, 40),
+         style=label.style_label_left, size=size.tiny)
+
+    label.new(hm_x2 + 1, close,
+         "◀ " + str.tostring(math.round(close, 2)),
+         color=color.new(color.black, 100), textcolor=color.white,
+         style=label.style_label_left, size=size.tiny)
+
+    label.new(hm_x2 + 1, p_low,
+         str.tostring(math.round(p_low, 2)),
+         color=color.new(color.black, 100), textcolor=color.new(color.gray, 40),
+         style=label.style_label_left, size=size.tiny)
+
+    // ── 7. Leyenda de intensidad (mini escala) ──
+    label.new(hm_x1, p_low - band_h * 1.5,
+         "█ fuerte  █ medio  █ débil",
+         color=color.new(color.black, 100),
+         textcolor=color.new(color.gray, 30),
+         style=label.style_label_right, size=size.tiny)
+
+// ============================================================
+// ALERTAS
+// ============================================================
+
+alertcondition(not na(ph) and score_r1 >= 5, title="Resistencia Alta Confluencia", message="SR - RESISTENCIA CONFLUENCIA ALTA en {{ticker}} precio: {{high}}")
+alertcondition(not na(pl) and score_s1 >= 5, title="Soporte Alta Confluencia",     message="SR - SOPORTE CONFLUENCIA ALTA en {{ticker}} precio: {{low}}")
+alertcondition(not na(ph), title="Nueva Resistencia", message="SR - RESISTENCIA en {{ticker}} precio: {{high}}")
+alertcondition(not na(pl), title="Nuevo Soporte",     message="SR - SOPORTE en {{ticker}} precio: {{low}}")
